@@ -42,6 +42,7 @@ use File::stat qw/:FIELDS/;
 use File::Find;
 use File::Path;
 use POSIX qw/mkfifo/;
+use Data::Dumper;
 
 use BackupPC::View;
 use Encode qw/from_to encode/;
@@ -65,7 +66,7 @@ sub start
     my $logMsg   = undef;
     my $incrDate = $t->{incrDate};
 
-    ( $t->{shareNameSlash} = "$t->{shareName}/" ) =~ s{//+$}{/};
+    ( $t->{shareNameSlash} = "$t->{shareName}/" ) =~ s{//+$}{/}g;
 
     from_to( $t->{shareName}, "utf8", $conf->{ClientCharset} )
       if ( $conf->{ClientCharset} ne "" );
@@ -127,6 +128,7 @@ sub run
     }
 
     $t->{xferOK} = !( $t->{_errStr} );
+    #print STDERR "error string = \"$t->{_errStr}\"\n";
     return wantarray ? @results : \@results;
 }
 
@@ -271,7 +273,7 @@ sub wanted
     }
 
     unless ( defined $fh xor defined $data ) {
-        $t->logFileAction( "fail", $fullName, $attribInfo );
+        logFileAction( "fail", $fullName, $attribInfo );
     }
 
     #
@@ -298,14 +300,14 @@ sub wanted
 
     my ( $exists, $digest, $outSize, $errs ) = $poolWrite->close();
     if (@$errs) {
-        $t->logFileAction( "fail", $fullName, $attribInfo );
+        logFileAction( "fail", $fullName, $attribInfo );
         unlink($poolFile);
         $t->{xferBadFileCnt}++;
         $t->{errCnt} += scalar(@$errs);
         return;
     }
 
-    $t->logFileAction( $exists ? "pool" : "create", $fullName, $attribInfo );
+    logFileAction( $exists ? "pool" : "create", $fullName, $attribInfo );
     print $newFilesFH "$digest $st->size $poolFile\n" unless $exists;
     $t->{byteCnt} += $dataSize;
     $t->{fileCnt}++;
@@ -351,104 +353,99 @@ sub restore
       BackupPC::View->new( $t->{bpc}, $t->{bkupSrcHost}, $t->{backups} );
     $t->{hardLinkPoolFiles} = {};
 
-    $t->{shareDest}   =~ s{/*$}{};
-    $t->{pathHdrDest} =~ s{^/*}{};
+    #
+    # $t->{shareName}/$t->{pathHdrDest} is the disk destination.
+    #
+    ( $t->{targetDir} = "$t->{shareName}/$t->{pathHdrDest}" ) =~ s{//+}{/}g;
 
-    if ( $t->{shareDest} !~ m/^\// ) {
-        $t->{_errStr} =
-          "\$t->{shareDest} must be an absolute path (given $t->{shareDest})";
-        return;
-
-    } elsif ( !( -d $t->{shareDest} ) ) {
-        $t->{_errStr} =
-          "\$t->{shareDest} must be an existing path (given $t->{shareDest})";
-        return;
-
-    } elsif ( !( -d "$t->{shareDest}/$t->{pathHdrDest}" ) ) {
-
+    if ( !-d $t->{targetDir} ) {
         undef $@;
-        eval {
-            mkpath( "$t->{shareDest}/$t->{pathHdrDest}",
-                1, 0777 & $conf->{UmaskMode} );
-        };
+        eval { mkpath( "$t->{targetDir}", 1, 0777 ); };
         if ($@) {
-            $t->{_errStr} = "can't create restore directory "
-              . "$t->{shareDest}/$t->{pathHdrDest}";
+            $t->{_errStr} = "can't create restore directory $t->{targetDir}";
             return;
         }
     }
 
     my $i = 0;
+    my $testFile;
     do {
         $i++;
-        my $testFile = "$t->{shareDest}}/$t->{pathHdrDest}/testFile.$$.$i";
+        $testFile = "$t->{targetDir}/testFile.$$.$i";
     } while ( -e $testFile );
 
     my $fd;
     if ( !open $fd, ">", $testFile ) {
-        $t->{_errStr} = "can't write to restore directory "
-          . "$t->{shareDest}/$t->{pathHdrDest}";
+        $t->{_errStr} = "can't write to restore directory $t->{targetDir}";
+        return;
     }
     close $fd;
+    unlink $testFile;
 
-    #
-    # restore each directory
-    #
-    map { $t->restoreDirEnt($_); } @$fileList;
-    $t->restoreWriteHardLinks();
+    foreach my $ent (@$fileList) {
+
+        if ( $ent =~ m{(^|/)\.\.(/|$)} || $ent !~ /^(.*)$/ ) {
+            $t->logWrite("failed backup of top-level share element $ent\n");
+            next;
+        }
+        $ent = "/" if $ent eq ".";
+        $view->find(
+            $t->{bkupSrcNum}, $t->{bkupSrcShare},
+            $ent,             0,
+            \&restoreDirEnt,  $t->{targetDir},
+            $t->{hardLinkPoolFiles}, sub { $t->logFileAction(@_) }
+        );
+    }
 }
 
 
+#
+# RESTORE HELPER FUNCTIONS
+#
+# Note: these are functions, and not methods. restoreDirEnt is a
+# dispatcher for other file types.
+#
 sub restoreDirEnt
 {
-    my ( $t, $dirEnt ) = @_;
-    my $dst = $t->{shareDest} . "/" . $t->{pathHdrDest} . "/" . $dirEnt;
-    my $fileAttrib = $t->{view}->fileAttrib($dirEnt);
+    my ( $fileAttrib, $targetDir, $hardLinkRef, $logFunction ) = @_;
+   #print STDERR "\$t->restoreDirEnt(\$fileAttrib, $targetDir, \$hardLinkRef, \$logFunction)\n";
+   #print STDERR "\$fileAttrib = " . Dumper($fileAttrib);
 
-    if ( $fileAttrib->{type} eq BPC_FTYPE_DIR ) {
-        $t->restoreDir($dirEnt);
+    if ( $fileAttrib->{type} == BPC_FTYPE_DIR ) {
+        restoreDir( $fileAttrib, $targetDir, $logFunction );
 
-    } elsif ( $fileAttrib->{type} eq BPC_FTYPE_FILE ) {
-        $t->restoreFile($dirEnt);
+    } elsif ( $fileAttrib->{type} == BPC_FTYPE_FILE ) {
+        restoreFile( $fileAttrib, $targetDir, $logFunction );
 
-    } elsif ( $fileAttrib->{type} eq BPC_FTYPE_HARDLINK ) {
-        $t->restoreHardLink($dirEnt);
+    } elsif ( $fileAttrib->{type} == BPC_FTYPE_HARDLINK ) {
+        restoreHardLink( $fileAttrib, $targetDir, $hardLinkRef, $logFunction );
 
-    } elsif ( $fileAttrib->{type} eq BPC_FTYPE_SYMLINK ) {
-        $t->restoreSymlink($dirEnt);
+    } elsif ( $fileAttrib->{type} == BPC_FTYPE_SYMLINK ) {
+        restoreSymlink( $fileAttrib, $targetDir, $logFunction );
 
     } elsif ( $fileAttrib->{type} == BPC_FTYPE_CHARDEV
-           || $fileAttrib->{type} == BPC_FTYPE_BLOCKDEV
-           || $fileAttrib->{type} == BPC_FTYPE_FIFO ) {
-        $t->restoreDevice($dirEnt);
+        || $fileAttrib->{type} == BPC_FTYPE_BLOCKDEV
+        || $fileAttrib->{type} == BPC_FTYPE_FIFO ) {
+        restoreDevice( $fileAttrib, $targetDir, $logFunction );
 
     } else {
-        $t->logFileAction( "fail", $name, $fileAttrib );
+        $logFunction->( "fail", $name, $fileAttrib );
     }
 }
 
 
 sub restoreDir
 {
-    #
-    # UNTESTED: factored out to handle recursion better
-    #
-    my ( $t, $dir ) = @_;
-    my $conf = $t->{conf};
-    my $view = $t->{view};
+    my ( $dirAttrib, $targetDir, $logFunction ) = @_;
+    #print STDERR "\$t->restoreDir(\$fileAttrib, $targetDir)\n";
 
-    my $dst = $t->{shareDest} . "/" . $t->{pathHdrDest} . "/" . $dir;
-    $dst =~ s{//+}{/}g;
+    ( my $dirPath = "$targetDir/$dirAttrib->{relPath}" ) =~ s{//+}{/}g;
 
-    my $dirAttrib = $view->fileAttrib($dir);
-    my @fileList  = @{ $view->dirAttrib($dir) };
-
-    eval { mkpath( $dst, 1, $dirAttrib->{mode} & $conf->{UmaskMode} ); };
+    eval { mkpath( $dirPath, 1, $dirAttrib->{mode} ); };
     if ($@) {
-        $t->logFileAction( "fail", $dir, $dirAttrib );
+        $logFunction->( "fail", $dirAttrib->{relPath}, $dirAttrib );
+        #print STDERR "failed to create directory $dst\n";
     }
-
-    map { $t->restoreDirEnt($_) } @fileList;
 }
 
 
@@ -458,10 +455,10 @@ sub restoreFile
     #
     # UNTESTED: Factored out to reduce code duplicity
     #
-    my ( $t, $file ) = @_;
-    my $fileAttrib = $t->{view}->fileAttrib($file);
+    my ( $fileAttrib, $targetDir, $logFunction ) = @_;
+    #print STDERR "\$t->restorefile(\$fileAttrib, $targetDir)\n";
 
-    my $dst = $t->{shareDest} . "/" . $t->{pathHdrDest} . "/" . $file;
+    emy $dst = "$t->{targetDir}$fileAttrib->{relPath}";
     my ($dstfh);
 
     my $f = BackupPC::FileZIO->open( $fileAttrib->{fullPath},
@@ -469,12 +466,13 @@ sub restoreFile
     open $dstfh, ">+", $dst;
 
     if ( !defined $dstfh || !defined $f ) {
-        $t->logFileAction( "fail", $name, $fileAttrib );
+        $logFunction->( "fail", $name, $fileAttrib );
     }
 
     while ( $f->read( \$data, $BufSize ) > 0 ) {
         print $dstfh, $data;
     }
+    $logFunction->( "restore", $name, $fileAttrib );
     $t->{fileCnt}++;
 }
 
@@ -482,26 +480,24 @@ sub restoreFile
 sub restoreHardLink
 {
     #
-    # INCOMPLETE: Write this data only if it hasn't been written yet;
-    # i.e., cache all the written pool files, and if the linked file
-    # hasn't been written yet, write it.  otherwise, hardlink it.
+    # UNTESTED: Factored out to reduce code duplicity
     #
-    my ( $t, $link ) = @_;
-    my $conf          = $t->{conf};
-    my $poolHardlinks = $t->{hardLinkPoolFiles};
+    my ( $linkAttrib, $targetDir, $hardLinkRef, $logFunction ) = @_;
+    #print STDERR "\$t->restoreHardLink($link)\n";
 
-    my $linkAttrib = $t->{view}->fileAttrib($link);
-    my $poolFile   = $linkAttrib->{fullPath};
+    my $poolFile = $linkAttrib->{fullPath};
 
-    if ( defined $poolHardLinks->{$poolFile} ) {
-        push @{ $poolHardLinks->{$poolFile} }, $link;
+    if ( defined $hardLinkRef->{$poolFile} ) {
+        push @{ $hardLinkRef->{$poolFile} }, $link;
     } else {
-        $poolHardLinks->{$poolFile} = [$link];
+        $hardLinkRef->{$poolFile} = [$link];
     }
-    $t->{fileCnt}++;
 }
 
 
+#
+#  This subroutine is a method.
+#
 sub restoreWriteHardLinks
 {
     #
@@ -509,14 +505,24 @@ sub restoreWriteHardLinks
     # others to it.
     #
     my ($t) = @_;
+    #print STDERR "\$t->restoreWriteHardLinks()\n";
 
     while ( my ( $poolFile, $fileList ) = each %{ $t->{hardLinkPoolFiles} } ) {
 
         next if ( @$fileList == 0 );
 
         my $firstFile = shift @$fileList;
-        $t->restoreWriteFile($firstFile);
-        map { link $firstFile, $_ } @$fileList;
+
+        #
+        # INCOMPLETE: recover this info & write.  May potentially
+        # involve thrashing memory.
+        #
+        restoreWriteFile($firstFile);
+
+        foreach ( @$fileList) {
+            link $firstFile, $_;
+            $t->{fileCnt}++
+        }
     }
 }
 
@@ -526,18 +532,21 @@ sub restoreSymlink
     #
     # UNTESTED: factored out to reduce duplicity and enhance readability
     #
-    my ( $t, $link ) = @_;
+    my ( $linkAttrib, $targetDir, $logFunction ) = @_;
 
-    my $linkAttrib = $t->{view}->fileAttrib($link);
-
-    my $dst = $t->{shareDest} . "/" . $t->{pathHdrDest} . "/" . $link;
+    my $dst = "$t->{targetDir}$linkAttrib->{relPath}";
     my $data;
 
+    #print STDERR "\$t->restoreSymlink($link)\n";
     my $l = BackupPC::FileZIO->open( $linkAttrib->{fullPath},
         0, $linkAttrib->{compress} );
 
     if ( !defined $l || $f->read( \$data, $BufSize ) < 0 ) {
-        $t->logFileAction( "fail", $link, $linkAttrib );
+
+        #
+        # INCOMPLETE: fuck, logging
+        #
+        $logFunction->( "fail", $link, $linkAttrib );
         $l->close if ( defined $l );
         $t->{errCnt}++;
         return;
@@ -547,19 +556,21 @@ sub restoreSymlink
     while ( $l->read( \$data, $BufSize ) > 0 ) {
         $symTarget .= $data;
     }
-
     symlink $symTarget, $dst;
+
+    #
+    # INCOMPLETE: fuck, logging
+    #
     $t->{fileCnt}++;
 }
 
 
 sub restoreDevice
 {
-    my ( $t, $dev ) = @_;
+    my ( $devAttrib, $targetDir, $logFunction ) = @_;
+    #print STDERR "\$t->restoreSymlink(\$devAttrib, $targetDir, \$logFunction)\n";
 
-    my $devAttrib = $t->{view}->fileAttrib($dev);
-
-    my $dst = $t->{shareDest} . "/" . $t->{pathHdrDest} . "/" . $dev;
+    my $dst = "$targetDir$devAttrib->{relPath}";
     my ($dstfh);
 
     my $d = BackupPC::FileZIO->open( $devAttrib->{fullPath},
@@ -567,7 +578,11 @@ sub restoreDevice
     my $data;
 
     if ( !defined($d) || $f->read( \$data, $BufSize ) < 0 ) {
-        $t->logFileAction( "fail", $dev, $devAttrib );
+
+        #
+        # INCOMPLETE: logging
+        #
+        $logFunction->( "fail", $dev, $devAttrib );
         $d->close if ( defined $d );
         $t->{errCnt}++;
         return;
@@ -577,8 +592,8 @@ sub restoreDevice
         my $devmajor = $1;
         my $devminor = $2;
     }
-    $t->restoreWriteDevice( $dst, $devAttrib->{mode}, $devmajor, $devminor )
-      or $t->logFileAction( "fail", $dev, $devAttrib );
+    restoreWriteDevice( $dst, $devAttrib->{mode}, $devmajor, $devminor )
+      or $logFunction->( "fail", $dev, $devAttrib );
 }
 
 
@@ -587,16 +602,17 @@ sub restoreWriteDevice
     #
     # UNTESTED: skullduggery with system calls and Unix::Mknod
     #
-    my $t    = shift @_;
     my $dst  = shift @_;
     my $mode = shift @_;
     my $maj  = shift @_;
     my $min  = shift @_;
+    #print STDERR "\$t->restorewriteDevice($dst, $mode, $maj, $min)";
 
     if ($UnixMknodOK) {
-        mknod( $dst, S_IFCHR | $Conf{UmaskMode}, makedev( $maj, $min ) );
+        mknod( $dst, ( S_IFCHR | $Conf{UmaskMode} ), makedev( $maj, $min ) );
 
     } else {
+
         #
         # use system calls
         #
@@ -613,14 +629,30 @@ sub restoreWriteDevice
 sub logFileAction
 {
     my ( $t, $action, $name, $st ) = @_;
+    my ( $owner, $fileAction );
 
-    #
-    # using the $st_* variables is ugly, but it works
-    #
-    my $owner      = "$st_uid/$st_gid";
-    my $fileAction = sprintf( "  %-6s %1s%4o %9s %11.0f %s\n",
-                              $action, $st_type, $st_mode & 07777,
-                              $owner,  $st_size, $name );
+    if ( ref $st eq "File::stat" ) {
+        #
+        # $st is a stat object.  using the $st_* variables is ugly, but
+        # it works.
+        #
+        $owner      = "$st_uid/$st_gid";
+        $fileAction = sprintf
+          "  %-6s %1s%4o %9s %11.0f %s\n",
+          $action, $st_type, $st_mode & 07777,
+          $owner,  $st_size, $name;
+
+    } else {
+        #
+        # $st is a BackupPC::Attrib fileAttrib array.
+        #
+        $owner      = "$st->{uid}/$st->{gid}";
+        $fileAction = sprintf
+          "  %-6s %1s%4o %9s %11.0f %s\n",
+          $action, $st->{type}, $st->{mode} & 07777,
+          $owner,  $st->{size}, $name;
+    }
+
     return $t->logWrite( $fileAction, 1 );
 }
 
