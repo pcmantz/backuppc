@@ -38,16 +38,18 @@
 package BackupPC::Xfer::Local;
 
 use Fcntl qw/:mode/;
+use Encode qw/from_to encode/;
+use POSIX qw/mkfifo/;
 use File::stat qw/:FIELDS/;
+
 use File::Find;
 use File::Path;
-use POSIX qw/mkfifo/;
 use Data::Dumper;
 
 use BackupPC::View;
-use Encode qw/from_to encode/;
-use base qw( BackupPC::Xfer::Protocol );
+use BackupPC::Attrib qw/:all/;
 
+use base qw( BackupPC::Xfer::Protocol );
 use vars qw( $UnixMknodOK );
 
 BEGIN {
