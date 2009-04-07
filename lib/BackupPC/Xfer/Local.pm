@@ -356,13 +356,13 @@ sub restore
     #
     # $t->{shareName}/$t->{pathHdrDest} is the disk destination.
     #
-    ( $t->{targetDir} = "$t->{shareName}/$t->{pathHdrDest}" ) =~ s{//+}{/}g;
+    ( my $targetDir = "$t->{shareName}/$t->{pathHdrDest}" ) =~ s{//+}{/}g;
 
-    if ( !-d $t->{targetDir} ) {
+    if ( !-d $targetDir ) {
         undef $@;
-        eval { mkpath( "$t->{targetDir}", 1, 0777 ); };
+        eval { mkpath( $targetDir, 1, 0777 ); };
         if ($@) {
-            $t->{_errStr} = "can't create restore directory $t->{targetDir}";
+            $t->{_errStr} = "can't create restore directory $targetDir";
             return;
         }
     }
@@ -371,12 +371,12 @@ sub restore
     my $testFile;
     do {
         $i++;
-        $testFile = "$t->{targetDir}/testFile.$$.$i";
+        $testFile = "$targetDir/testFile.$$.$i";
     } while ( -e $testFile );
 
     my $fd;
     if ( !open $fd, ">", $testFile ) {
-        $t->{_errStr} = "can't write to restore directory $t->{targetDir}";
+        $t->{_errStr} = "can't write to restore directory $targetDir";
         return;
     }
     close $fd;
@@ -392,7 +392,7 @@ sub restore
         $view->find(
             $t->{bkupSrcNum}, $t->{bkupSrcShare},
             $ent,             0,
-            \&restoreDirEnt,  $t->{targetDir},
+            \&restoreDirEnt,  $targetDir,
             $t->{hardLinkPoolFiles}, sub { $t->logFileAction(@_) }
         );
     }
@@ -449,7 +449,6 @@ sub restoreDir
 }
 
 
-
 sub restoreFile
 {
     #
@@ -458,7 +457,7 @@ sub restoreFile
     my ( $fileAttrib, $targetDir, $logFunction ) = @_;
     #print STDERR "\$t->restorefile(\$fileAttrib, $targetDir)\n";
 
-    emy $dst = "$t->{targetDir}$fileAttrib->{relPath}";
+    ( my $dst = "$targetDir/$fileAttrib->{relPath}" ) =~ s{//+}{/}g;
     my ($dstfh);
 
     my $f = BackupPC::FileZIO->open( $fileAttrib->{fullPath},
@@ -534,7 +533,7 @@ sub restoreSymlink
     #
     my ( $linkAttrib, $targetDir, $logFunction ) = @_;
 
-    my $dst = "$t->{targetDir}$linkAttrib->{relPath}";
+    ( my $dst = "$targetDir/$linkAttrib->{relPath}" ) =~ s{//+}{/}g;
     my $data;
 
     #print STDERR "\$t->restoreSymlink($link)\n";
@@ -565,7 +564,7 @@ sub restoreDevice
     my ( $devAttrib, $targetDir, $logFunction ) = @_;
     #print STDERR "\$t->restoreSymlink(\$devAttrib, $targetDir, \$logFunction)\n";
 
-    my $dst = "$targetDir$devAttrib->{relPath}";
+    ( my $dst = "$targetDir/$devAttrib->{relPath}" ) =~ s{//+}{/}g;
     my ($dstfh);
 
     my $d = BackupPC::FileZIO->open( $devAttrib->{fullPath},
