@@ -429,7 +429,7 @@ sub restoreDirEnt
         restoreDevice( $fileAttrib, $targetDir, $logFunction );
 
     } else {
-        $logFunction->( "fail", $name, $fileAttrib );
+        $logFunction->( "fail", $fileAttrib->{relPath}, $fileAttrib );
     }
 }
 
@@ -466,13 +466,13 @@ sub restoreFile
     open $dstfh, ">+", $dst;
 
     if ( !defined $dstfh || !defined $f ) {
-        $logFunction->( "fail", $name, $fileAttrib );
+        $logFunction->( "fail", $fileAttrib->{relPath}, $fileAttrib );
     }
 
     while ( $f->read( \$data, $BufSize ) > 0 ) {
         print $dstfh, $data;
     }
-    $logFunction->( "restore", $name, $fileAttrib );
+    $logFunction->( "restore", $fileAttrib->{relPath}, $fileAttrib );
     $t->{fileCnt}++;
 }
 
@@ -543,10 +543,7 @@ sub restoreSymlink
 
     if ( !defined $l || $f->read( \$data, $BufSize ) < 0 ) {
 
-        #
-        # INCOMPLETE: fuck, logging
-        #
-        $logFunction->( "fail", $link, $linkAttrib );
+        $logFunction->( "fail", $linkAttrib->{relPath}, $linkAttrib );
         $l->close if ( defined $l );
         $t->{errCnt}++;
         return;
@@ -558,9 +555,7 @@ sub restoreSymlink
     }
     symlink $symTarget, $dst;
 
-    #
-    # INCOMPLETE: fuck, logging
-    #
+    $logFunction->( "restore", $linkAttrib->{relPath}, $linkAttrib );
     $t->{fileCnt}++;
 }
 
@@ -579,10 +574,7 @@ sub restoreDevice
 
     if ( !defined($d) || $f->read( \$data, $BufSize ) < 0 ) {
 
-        #
-        # INCOMPLETE: logging
-        #
-        $logFunction->( "fail", $dev, $devAttrib );
+        $logFunction->( "fail", $devAttrib->{relPath}, $devAttrib );
         $d->close if ( defined $d );
         $t->{errCnt}++;
         return;
@@ -593,7 +585,7 @@ sub restoreDevice
         my $devminor = $2;
     }
     restoreWriteDevice( $dst, $devAttrib->{mode}, $devmajor, $devminor )
-      or $logFunction->( "fail", $dev, $devAttrib );
+      or $logFunction->( "fail", $devAttrib->{relPath}, $devAttrib );
 }
 
 
