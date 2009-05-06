@@ -52,9 +52,11 @@ use BackupPC::View;
 use BackupPC::Attrib qw/:all/;
 
 use base qw( BackupPC::Xfer::Protocol );
-use vars qw( $UnixMknodOK );
+use vars qw( $UnixMknodOK $BufSize );
 
 BEGIN {
+
+    $BufSize = 1048576;
 
     undef $@;
     eval "use Unix::Mknod;";
@@ -420,7 +422,7 @@ sub restoreDirEnt
     #print STDERR "\$fileAttrib = " . Dumper($fileAttrib);
 
     if ( $fileAttrib->{type} == BPC_FTYPE_DIR ) {
-        restoreDir($fileAttrib);
+        $t->restoreDir($fileAttrib);
 
     } elsif ( $fileAttrib->{type} == BPC_FTYPE_FILE ) {
         $t->restoreFile($fileAttrib);
@@ -477,7 +479,7 @@ sub restoreFile
         $t->logFileAction( "fail", $fileAttrib->{relPath}, $fileAttrib );
     }
 
-    while ( $f->read( \$data, 1048576 ) > 0 ) {
+    while ( $f->read( \$data, $BufSize ) > 0 ) {
         print $dstfh $data;
     }
     $t->logFileAction( "restore", $fileAttrib->{relPath}, $fileAttrib );
@@ -540,7 +542,7 @@ sub restoreSymlink
     my $l = BackupPC::FileZIO->open( $linkAttrib->{fullPath},
         0, $linkAttrib->{compress} );
 
-    if ( !defined $l || $l->read( \$data, 1048576 ) < 0 ) {
+    if ( !defined $l || $l->read( \$data, $BufSize ) < 0 ) {
 
         $t->logFileAction( "fail", $linkAttrib->{relPath}, $linkAttrib );
         $l->close() if defined $l;
@@ -548,7 +550,7 @@ sub restoreSymlink
     }
 
     my $symTarget = $data;
-    while ( $l->read( \$data, 1048576 ) > 0 ) {
+    while ( $l->read( \$data, $BufSize ) > 0 ) {
         $symTarget .= $data;
     }
 
@@ -584,7 +586,7 @@ sub restoreDevice
         0, $devAttrib->{compress} );
     my $data;
 
-    if ( !defined($d) || $d->read( \$data, 1048576 ) < 0 ) {
+    if ( !defined($d) || $d->read( \$data, $BufSize ) < 0 ) {
 
         $t->logFileAction( "fail", $devAttrib->{relPath}, $devAttrib );
         $d->close() if ( defined $d );
