@@ -30,7 +30,7 @@
 #
 #========================================================================
 #
-# Version 3.2.0beta0, released 5 April 2009.
+# Version 3.2.0, released 31 Jul 2010.
 #
 # See http://backuppc.sourceforge.net.
 #
@@ -176,7 +176,7 @@ sub restoreEnabled
         return;
 
     } elsif ( $conf->{XferMethod} eq "ftp" ) {
-        return !!( $conf->{FtpRestoreEnabled} );
+        return;
 
     } elsif ( $conf->{XferMethod} eq "rsync"
            || $conf->{XferMethod} eq "rsyncd"

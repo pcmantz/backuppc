@@ -28,7 +28,7 @@
 #
 #========================================================================
 #
-# Version 3.2.0beta0, released 5 April 2009.
+# Version 3.2.1, released 24 Apr 2011.
 #
 # See http://backuppc.sourceforge.net.
 #
@@ -73,8 +73,8 @@ sub action
     for ( $i = 0 ; $i < @Backups ; $i++ ) {
         last if ( $Backups[$i]{num} == $num );
     }
-    if ( $i >= @Backups ) {
-        ErrorExit("Backup number $num for host ${EscHTML($host)} does"
+    if ( $i >= @Backups || $num !~ /^\d+$/ ) {
+        ErrorExit("Backup number ${EscHTML($num)} for host ${EscHTML($host)} does"
 	        . " not exist.");
     }
     my $backupTime = timeStamp2($Backups[$i]{startTime});

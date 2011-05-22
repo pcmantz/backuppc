@@ -30,7 +30,7 @@
 #
 #========================================================================
 #
-# Version 3.2.0beta0, released 5 April 2009.
+# Version 3.2.1, released 24 Apr 2011.
 #
 # See http://backuppc.sourceforge.net.
 #
@@ -252,11 +252,18 @@ sub read
 	    $fd->read(\$newData, 65536);
 	    $data .= $newData;
 	}
-	(
-            @{$a->{files}{$fileName}}{@FldsUnixW},
-            @{$a->{files}{$fileName}}{@FldsUnixN},
-            $data
-        ) = unpack("w$nFldsW N$nFldsN a*", $data);
+        eval {
+           (
+               @{$a->{files}{$fileName}}{@FldsUnixW},
+               @{$a->{files}{$fileName}}{@FldsUnixN},
+               $data
+            ) = unpack("w$nFldsW N$nFldsN a*", $data);
+        };
+        if ( $@ ) {
+            $a->{_errStr} = "unpack: Can't read attributes for $fileName from $file ($@)";
+            $fd->close;
+            return;
+        }
         if ( $a->{files}{$fileName}{$FldsUnixN[-1]} eq "" ) {
             $a->{_errStr} = "Can't read attributes for $fileName"
                           . " from $file";
@@ -290,10 +297,15 @@ sub writeData
                     = $a->{files}{$file}{size} % (4096 * 1024 * 1024);
         $a->{files}{$file}{sizeDiv4GB}
                     = int($a->{files}{$file}{size} / (4096 * 1024 * 1024));
-	$data .= pack("w a* w$nFldsW N$nFldsN", length($file), $file,
-			       @{$a->{files}{$file}}{@FldsUnixW},
-			       @{$a->{files}{$file}}{@FldsUnixN},
-                    );
+        eval {
+            $data .= pack("w a* w$nFldsW N$nFldsN", length($file), $file,
+                                   @{$a->{files}{$file}}{@FldsUnixW},
+                                   @{$a->{files}{$file}}{@FldsUnixN},
+                        );
+        };
+        if ( $@ ) {
+            $a->{_errStr} = "Can't pack attr for $file: " . Dumper($a->{files}{$file});
+        }
     }
     return $data;
 }

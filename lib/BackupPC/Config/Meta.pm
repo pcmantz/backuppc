@@ -28,7 +28,7 @@
 #
 #========================================================================
 #
-# Version 3.2.0beta0, released 5 April 2009.
+# Version 3.2.0, released 31 Jul 2010.
 #
 # See http://backuppc.sourceforge.net.
 #
@@ -278,11 +278,11 @@ use vars qw(%ConfigMeta);
     },
     FtpUserName         => "string",
     FtpPasswd           => "string",
+    FtpPassive          => "boolean",
     FtpBlockSize        => "integer",
     FtpPort             => "integer",
     FtpTimeout          => "integer",
     FtpFollowSymlinks   => "boolean",
-    FtpRestoreEnabled   => "boolean",
 
     ######################################################################
     # Archive Configuration
@@ -351,7 +351,7 @@ use vars qw(%ConfigMeta);
     CgiURL	 	=> "string",
     Language	 	=> {
 	    type   => "select",
-	    values => [qw(de en es fr it nl pl pt_br zh_CN)],
+	    values => [qw(cz de en es fr it nl pl pt_br zh_CN)],
     },
     CgiUserHomePageCheck => "string",
     CgiUserUrlCreate    => "string",
